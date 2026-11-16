@@ -563,6 +563,23 @@ select {
 .muted-levels .seg.auto-now b {
   color: var(--yellow);
 }
+.who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: .9rem var(--mono);
+  color: var(--muted);
+}
+.who .nick {
+  color: var(--yellow);
+  text-shadow: 0 0 8px rgb(248 243 43 / .4);
+}
+.welcome-card {
+  gap: 12px;
+}
+.welcome-card .term-input {
+  font-size: 1.15rem;
+}
 
 /* src/styles/patient-monitor.css */
 .pm {
@@ -6441,6 +6458,8 @@ select {
   // src/ui/screens/home.js
   function render(root, ctx) {
     const auto = ctx.auto(), skill = ctx.data.skill ?? 1;
+    const nickEl = h("b", { class: "nick" });
+    nickEl.textContent = ctx.data.player?.nickname || "닉네임 없음";
     const mix = auto || !!ctx.data.settings.mixLower;
     const level = ctx.level(), pool = poolFor(ctx.content, level, { mix });
     const allKeys = poolFor(ctx.content, LEVELS[LEVELS.length - 1], { mix: true }).keys;
@@ -6507,7 +6526,8 @@ select {
         { class: "home-head" },
         h("p", { class: "boot", "aria-hidden": "true" }, "> CARDIAC MONITOR SIM // ONLINE ▮"),
         h("h1", { class: "glitch", "data-text": "EKG 리듬 트레이너" }, "EKG 리듬 트레이너"),
-        h("p", { class: "sub" }, "파형을 읽고 → 맥박을 확인하고 → 가이드라인대로 대처")
+        h("p", { class: "sub" }, "파형을 읽고 → 맥박을 확인하고 → 가이드라인대로 대처"),
+        h("p", { class: "who" }, "👤 ", nickEl, " ", h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.go("welcome", { edit: true }) }, "변경"))
       ),
       h(
         "section",
@@ -8531,6 +8551,7 @@ select {
 
   // src/ui/screens/play.js
   function render2(root, ctx, { mode: modeId }) {
+    if (!ctx.data.player?.nickname) return ctx.go("welcome", { next: modeId }, { replace: true });
     const mode = modeById(modeId), typing = ctx.data.settings.input === "typing", auto = ctx.auto();
     const fixed = ctx.level(), mix = !!ctx.data.settings.mixLower;
     const pools = Object.fromEntries(LEVELS.map((l) => [l.rank, poolFor(ctx.content, l)]));
@@ -9323,7 +9344,7 @@ select {
       stripSlot,
       info
     );
-    function render9() {
+    function render10() {
       current?.view.destroy();
       current = createBeatView({ ecg: variant?.ecg ?? { pattern: "sinus", rate: 75 }, rhythmId: variant?.rhythm });
       const { view, beat, next, beats, from, sec } = current;
@@ -9369,11 +9390,11 @@ select {
             { class: "abn-list" },
             h("button", { type: "button", class: "abn-btn" + (variant ? "" : " on"), onclick: () => {
               variant = null;
-              render9();
+              render10();
             } }, "정상"),
             comp.abnormal.map((v) => h("button", { type: "button", class: "abn-btn" + (variant === v ? " on" : ""), onclick: () => {
               variant = v;
-              render9();
+              render10();
             } }, v.label))
           ),
           variant && h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.go("rhythm", { id: variant.rhythm }) }, `📖 도감: ${ctx.content.rhythmById[variant.rhythm].name} ›`)
@@ -9389,10 +9410,10 @@ select {
       onclick: () => {
         comp = c;
         variant = null;
-        render9();
+        render10();
       }
     }, c.label)));
-    return { el, start: render9, destroy: () => current?.view.destroy() };
+    return { el, start: render10, destroy: () => current?.view.destroy() };
   }
 
   // src/config/analysis.js
@@ -9535,7 +9556,7 @@ select {
       { class: "rhythm-select", "aria-label": "리듬 고르기", onchange: (e) => {
         rhythm = ctx.content.rhythmById[e.target.value];
         quiz = null;
-        render9();
+        render10();
       } },
       GROUPS.map((g2) => h("optgroup", { label: g2.label }, rhythms.filter((r) => r.group === g2.id).map((r) => h("option", { value: r.id }, r.name))))
     );
@@ -9552,7 +9573,7 @@ select {
           rhythm = rhythms[Math.floor(Math.random() * rhythms.length)];
           seed++;
           quiz = null;
-          render9();
+          render10();
         } }, "🎲 무작위"),
         h("label", { class: "switch", for: "opt-marks" }, marks, h("span", {}, "P · QRS · T 자동 표시"))
       ),
@@ -9574,7 +9595,7 @@ select {
         )
       )
     );
-    function render9() {
+    function render10() {
       ms?.destroy();
       select.value = rhythm.id;
       ms = createMeasuredStrip(rhythm.ecg, { seed, autoMarks: marks.checked });
@@ -9586,7 +9607,7 @@ select {
       const pool = rhythms.filter((r) => measurable(truthOf(renderStrip(r.ecg, { duration: 8, fs: 250, seed: seed + 1 }))).length);
       rhythm = pool[Math.floor(Math.random() * pool.length)];
       seed++;
-      render9();
+      render10();
       const kinds = measurable(ms.truth).filter((k) => k !== "qt" || Math.random() < 0.3);
       quiz = { kind: kinds[Math.floor(Math.random() * kinds.length)], result: null };
       marks.checked = false;
@@ -9627,7 +9648,7 @@ select {
       );
       if (!r) queueMicrotask(() => input.focus({ preventScroll: true }));
     }
-    return { el, start: render9, destroy: () => ms?.destroy() };
+    return { el, start: render10, destroy: () => ms?.destroy() };
   }
 
   // src/content/analysis.js
@@ -9911,8 +9932,67 @@ select {
     };
   }
 
+  // src/ui/screens/welcome.js
+  var welcome_exports = {};
+  __export(welcome_exports, {
+    render: () => render9
+  });
+  function render9(root, ctx, { edit = false, next = null } = {}) {
+    const player = ensurePlayer(ctx);
+    const msg = h("p", { class: "term-status", "aria-live": "polite" });
+    const input = h("input", {
+      type: "text",
+      class: "term-input",
+      maxlength: String(NICK_MAX),
+      placeholder: `닉네임 (최대 ${NICK_MAX}자)`,
+      autocomplete: "off",
+      enterkeyhint: "done",
+      "aria-label": "닉네임"
+    });
+    input.value = player.nickname || "";
+    async function save(e) {
+      e?.preventDefault();
+      const name = input.value.trim();
+      if (!name) {
+        msg.textContent = "닉네임을 입력하세요";
+        msg.className = "term-status warn";
+        input.focus();
+        return;
+      }
+      setLocalNickname(ctx, name);
+      getBoard().setNickname(name, ctx.data.player).catch(() => {
+      });
+      ctx.toast(`${name} 님, 반가워요!`);
+      if (next) ctx.go("play", { mode: next }, { replace: true });
+      else ctx.go("home", {}, { replace: true });
+    }
+    root.append(h(
+      "div",
+      { class: "screen welcome" },
+      h(
+        "header",
+        { class: "home-head" },
+        h("p", { class: "boot", "aria-hidden": "true" }, "> CARDIAC MONITOR SIM // LOGIN ▮"),
+        h("h1", { class: "glitch", "data-text": "EKG 리듬 트레이너" }, "EKG 리듬 트레이너"),
+        h("p", { class: "sub" }, edit ? "랭킹에 보일 닉네임을 바꿉니다." : "시작하기 전에 랭킹에 보일 닉네임을 정해 주세요.")
+      ),
+      h(
+        "form",
+        { class: "card welcome-card", onsubmit: save },
+        h("label", { class: "block-title", for: "nick" }, "닉네임"),
+        h("div", { class: "term" }, h("span", { class: "term-prompt", "aria-hidden": "true" }, ">"), Object.assign(input, { id: "nick" })),
+        msg,
+        h("p", { class: "muted small" }, "실명 대신 별명을 쓰세요 (예: 응급실 김간호). 랭킹에는 닉네임 · 점수만 보입니다."),
+        h("button", { type: "submit", class: "btn primary block" }, edit ? "저장" : "시작하기 ▶"),
+        edit && h("button", { type: "button", class: "btn ghost block", onclick: () => ctx.go("home", {}, { replace: true }) }, "취소")
+      ),
+      h("p", { class: "disclaimer" }, "교육용 보조 도구입니다. 실제 처치는 기관 프로토콜과 최신 가이드라인 원문을 따르세요.")
+    ));
+    queueMicrotask(() => input.focus({ preventScroll: true }));
+  }
+
   // src/ui/app.js
-  var SCREENS = { home: home_exports, play: play_exports, result: result_exports, library: library_exports, rhythm: rhythm_exports, about: about_exports, analysis: analysis_exports, ranking: ranking_exports };
+  var SCREENS = { home: home_exports, play: play_exports, result: result_exports, library: library_exports, rhythm: rhythm_exports, about: about_exports, analysis: analysis_exports, ranking: ranking_exports, welcome: welcome_exports };
   function startApp(root) {
     const store = createStore(browserStorage(), STORAGE_KEY);
     let data = store.load();
@@ -9954,10 +10034,11 @@ select {
     };
     addEventListener("popstate", (e) => {
       const st = e.state;
-      if (!st || st.name === "play") show("home", {});
+      if (!data.player?.nickname) show("welcome", {});
+      else if (!st || st.name === "play") show("home", {});
       else show(st.name, st.params ?? {});
     });
-    ctx.go("home", {}, { replace: true });
+    ctx.go(data.player?.nickname ? "home" : "welcome", {}, { replace: true });
     return ctx;
   }
 
