@@ -5,7 +5,8 @@
  *
  *   GET  ?action=top&limit=50&me=<플레이어 id>  → 상위 랭킹 + 내 순위
  *   POST {action:'submit', id, token, nickname, points, best, answered, correct}  → 점수 누적
- *   POST {action:'nick',   id, token, nickname}                                   → 닉네임 변경
+ *   POST {action:'nick',   id, token, nickname}                                   → 닉네임 변경 (중복이면 error:'taken')
+ *   GET  ?action=check&nickname=…&me=<id>                                          → 닉네임 사용 가능 여부
  *
  * 시트 'scores' 한 줄 = 플레이어 한 명. 이상한 기록은 시트에서 그 줄을 지우면 됩니다.
  * 토큰은 원문이 아니라 해시만 저장합니다 (같은 브라우저만 그 기록에 점수를 더할 수 있게).
@@ -18,6 +19,10 @@ var LIMITS = {points: 60000, nick: 12, top: 100, answered: 400};
 function doGet(e){
   var p = (e && e.parameter) || {};
   if(p.action === 'top') return json_(top_(readRows_(), Number(p.limit) || 50, String(p.me || '')));
+  if(p.action === 'check'){
+    var nick = cleanNick_(p.nickname);
+    return json_({ok: true, nickname: nick, available: !!nick && !nickTaken_(readRows_(), nick, String(p.me || ''))});
+  }
   return json_({ok: true, service: 'ekg-trainer-leaderboard'});
 }
 
@@ -43,6 +48,14 @@ function cleanNick_(s){
   // 제어문자 제거, 수식으로 해석될 수 있는 첫 글자(= + - @) 제거, 12자
   return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/^[=+\-@\s]+/, '').slice(0, LIMITS.nick);
 }
+// 닉네임 중복 판단용: 띄어쓰기 · 대소문자 무시 ('응급실 김간호' = '응급실김간호')
+function nickKey_(s){ return cleanNick_(s).toLowerCase().replace(/\s+/g, ''); }
+function nickTaken_(rows, nick, id){
+  var k = nickKey_(nick);
+  if(!k) return false;
+  for(var i = 0; i < rows.length; i++) if(rows[i].id !== id && nickKey_(rows[i].nickname) === k) return true;
+  return false;
+}
 function validId_(s){ return typeof s === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(s); }
 function int_(v, max){ var n = Math.floor(Number(v)); return isFinite(n) && n >= 0 ? Math.min(n, max) : 0; }
 
@@ -51,16 +64,19 @@ function submit_(rows, b, now){
   var pts = int_(b.points, LIMITS.points), answered = int_(b.answered, LIMITS.answered);
   var correct = Math.min(int_(b.correct, LIMITS.answered), answered), best = int_(b.best, LIMITS.points);
   var i = indexOf_(rows, b.id), hash = hash_(b.token), nick = cleanNick_(b.nickname);
+  // 다른 사람이 쓰는 닉네임이면 점수는 받되 닉네임은 바꾸지 않음
+  var taken = !!nick && nickTaken_(rows, nick, b.id);
+  if(taken) nick = '';
   var row;
   if(i < 0){
-    row = {id: b.id, tokenHash: hash, nickname: nick || ('익명-' + b.id.slice(0, 4)), total: pts, best: best, games: 1, answered: answered, correct: correct, updatedAt: now};
+    row = {id: b.id, tokenHash: hash, nickname: nick || ('익명-' + b.id.slice(1, 7)), total: pts, best: best, games: 1, answered: answered, correct: correct, updatedAt: now};
   }else{
     var r = rows[i];
     if(r.tokenHash !== hash) return {result: {ok: false, error: 'token'}};
     row = {id: r.id, tokenHash: r.tokenHash, nickname: nick || r.nickname, total: Number(r.total) + pts, best: Math.max(Number(r.best), best),
       games: Number(r.games) + 1, answered: Number(r.answered) + answered, correct: Number(r.correct) + correct, updatedAt: now};
   }
-  return {index: i, row: row, result: {ok: true, total: row.total, nickname: row.nickname}};
+  return {index: i, row: row, result: {ok: true, total: row.total, nickname: row.nickname, nickTaken: taken}};
 }
 
 function rename_(rows, b, now){
@@ -69,6 +85,7 @@ function rename_(rows, b, now){
   if(!nick) return {result: {ok: false, error: 'empty'}};
   var i = indexOf_(rows, b.id), hash = hash_(b.token);
   if(i >= 0 && rows[i].tokenHash !== hash) return {result: {ok: false, error: 'token'}};
+  if(nickTaken_(rows, nick, b.id)) return {result: {ok: false, error: 'taken'}};
   var base = i >= 0 ? rows[i] : {id: b.id, tokenHash: hash, total: 0, best: 0, games: 0, answered: 0, correct: 0};
   var row = {id: base.id, tokenHash: base.tokenHash, nickname: nick, total: Number(base.total), best: Number(base.best),
     games: Number(base.games), answered: Number(base.answered), correct: Number(base.correct), updatedAt: now};
