@@ -589,6 +589,126 @@ select {
 .welcome-card .term-input {
   font-size: 1.15rem;
 }
+.hof {
+  appearance: none;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 14px 12px;
+  margin-top: 4px;
+  text-align: left;
+  color: #ffe9a8;
+  background:
+    linear-gradient(
+      100deg,
+      rgb(255 196 0 / .16),
+      rgb(255 43 214 / .10) 60%,
+      rgb(255 196 0 / .14));
+  border: 1px solid rgb(255 206 60 / .7);
+  box-shadow: 0 0 18px rgb(255 196 0 / .25), inset 0 0 24px rgb(255 196 0 / .12);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  position: relative;
+  overflow: hidden;
+}
+.hof::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      110deg,
+      transparent 35%,
+      rgb(255 255 255 / .22) 50%,
+      transparent 65%);
+  transform: translateX(-100%);
+  animation: hof-shine 4.5s ease-in-out infinite;
+}
+@keyframes hof-shine {
+  60%, 100% {
+    transform: translateX(100%);
+  }
+}
+.hof:hover {
+  box-shadow: 0 0 26px rgb(255 196 0 / .45), inset 0 0 24px rgb(255 196 0 / .18);
+}
+.hof-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font: 800 .82rem var(--mono);
+  letter-spacing: .06em;
+  color: #ffd24a;
+  text-shadow: 0 0 10px rgb(255 196 0 / .6);
+}
+.hof-trophy {
+  font-size: 1.2rem;
+}
+.hof-champ {
+  flex-basis: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.hof-crown {
+  font-size: 2rem;
+  filter: drop-shadow(0 0 6px rgb(255 196 0 / .8));
+  animation: hof-bob 2.4s ease-in-out infinite;
+}
+@keyframes hof-bob {
+  50% {
+    transform: translateY(-3px) rotate(-6deg);
+  }
+}
+.hof-who {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  line-height: 1.2;
+}
+.hof-who small {
+  font: 700 .64rem var(--mono);
+  color: #ffcf5a;
+  letter-spacing: .08em;
+}
+.hof-name {
+  font-size: 1.45rem;
+  font-weight: 900;
+  color: #fff6d6;
+  text-shadow: 0 0 14px rgb(255 196 0 / .8);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.hof-pts {
+  font: 800 1rem var(--mono);
+  color: #ffd24a;
+  white-space: nowrap;
+}
+.hof-wait {
+  font: .85rem var(--mono);
+  color: #ffe9a8;
+  opacity: .9;
+  padding: 4px 0;
+}
+.hof-go {
+  font: 700 .74rem var(--mono);
+  color: #ffd24a;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hof::after,
+  .hof-crown {
+    animation: none;
+  }
+}
 
 /* src/styles/patient-monitor.css */
 .pm {
@@ -6308,6 +6428,240 @@ select {
     // 초성 힌트를 쓰면 점수 배율
   };
 
+  // src/config/leaderboard.js
+  var LEADERBOARD = {
+    sheetUrl: "https://script.google.com/macros/s/AKfycbzId99BdjjhQt4d2dTxvdAYDW442puNvaYiD3LbJ6qORMinjiOpXoL1D1ehKxIMV_XneA/exec",
+    pollSeconds: 30,
+    // 구글 시트 랭킹 새로고침 간격
+    top: 50
+  };
+
+  // src/ui/services/leaderboard/sheet.js
+  function createSheetBoard(url, { pollSeconds = 30 } = {}) {
+    const post = async (body) => {
+      const r = await fetch(url, { method: "POST", cache: "no-store", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body) });
+      return r.json();
+    };
+    return {
+      kind: "sheet",
+      label: "공유 랭킹 (구글 시트)",
+      status: async () => ({ available: true, canWrite: true }),
+      async submit({ points, best, answered, correct }, player) {
+        try {
+          const r = await post({ action: "submit", id: player.id, token: player.token, nickname: player.nickname, points, best, answered, correct });
+          return r.ok ? { ok: true, total: r.total, nickname: r.nickname, nickTaken: !!r.nickTaken } : { ok: false, reason: r.error };
+        } catch {
+          return { ok: false, reason: "network" };
+        }
+      },
+      // 결과: {ok:true, nickname} · {ok:false, reason:'taken' | 'network' | …}
+      async setNickname(name, player) {
+        try {
+          const r = await post({ action: "nick", id: player.id, token: player.token, nickname: name });
+          return r.ok ? { ok: true, nickname: r.nickname } : { ok: false, reason: r.error };
+        } catch {
+          return { ok: false, reason: "network" };
+        }
+      },
+      getNickname: async (player) => player.nickname || "",
+      // 일정 간격으로 다시 읽음. 반환값 = 멈춤 함수
+      watch(n, player, onRows, onError) {
+        let stop = false, timer2 = 0;
+        const load = async () => {
+          try {
+            const r = await (await fetch(`${url}?action=top&limit=${n}&me=${encodeURIComponent(player.id)}&t=${Date.now()}`, { cache: "no-store" })).json();
+            if (stop) return;
+            if (!r.ok) throw new Error(r.error);
+            onRows(r.rows.map((x) => ({ key: `${x.rank}`, ...x, name: x.nickname })), r.me && { ...r.me, name: r.me.nickname }, r.players);
+          } catch {
+            if (!stop) onError("network");
+          }
+          if (!stop) timer2 = setTimeout(load, pollSeconds * 1e3);
+        };
+        load();
+        return () => {
+          stop = true;
+          clearTimeout(timer2);
+        };
+      }
+    };
+  }
+
+  // src/ui/services/leaderboard/claude.js
+  var COLLECTION = "scores";
+  var NICK_MAX = 12;
+  var conn = null;
+  function connect() {
+    if (conn) return conn;
+    conn = (async () => {
+      const c = globalThis.claude;
+      if (!c || typeof c.use !== "function") return null;
+      const [db, user] = await Promise.all([c.use("db"), c.use("user")]);
+      if (!db || !user) return null;
+      const id28 = await user.id();
+      const canWrite = await user.can("data.write");
+      return { db, user, id: id28, canWrite: canWrite !== false && !!id28 };
+    })().catch(() => null);
+    return conn;
+  }
+  var clean = (s) => String(s ?? "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, NICK_MAX);
+  async function submitScore({ points, best = 0, answered = 0, correct = 0, localTotal = 0 }) {
+    const s = await connect();
+    if (!s?.canWrite) return { ok: false, reason: s ? "readonly" : "offline" };
+    try {
+      const ref = s.db.collection(COLLECTION).doc(s.id);
+      const snap = await ref.get();
+      const cur = snap.exists ? snap.data() : null;
+      const total = cur ? (Number(cur.total) || 0) + points : Math.max(localTotal, points);
+      await ref.set({
+        total: Math.round(total),
+        best: Math.max(Number(cur?.best) || 0, best),
+        games: (Number(cur?.games) || 0) + 1,
+        answered: (Number(cur?.answered) || 0) + answered,
+        correct: (Number(cur?.correct) || 0) + correct,
+        nickname: clean(cur?.nickname),
+        updatedAt: Date.now()
+      });
+      return { ok: true, total };
+    } catch (e) {
+      if (e?.code === "invalid_argument" && s) s.canWrite = false;
+      return { ok: false, reason: e?.code ?? "error" };
+    }
+  }
+  async function setNickname(name) {
+    const s = await connect();
+    if (!s?.canWrite) return false;
+    try {
+      const ref = s.db.collection(COLLECTION).doc(s.id);
+      const snap = await ref.get();
+      if (snap.exists) await ref.update({ nickname: clean(name), updatedAt: Date.now() });
+      else await ref.set({ total: 0, best: 0, games: 0, answered: 0, correct: 0, nickname: clean(name), updatedAt: Date.now() });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function watchTop(s, n, onRows, onError) {
+    return s.db.collection(COLLECTION).orderBy("total", "desc").limit(n).onSnapshot(
+      (snap) => onRows(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (e) => onError?.(e?.code ?? "error")
+    );
+  }
+  async function namesFor(s, rows) {
+    let profiles = {};
+    try {
+      profiles = await s.user.profiles(rows.map((r) => r.id));
+    } catch {
+    }
+    return Object.fromEntries(rows.map((r) => [r.id, profiles[r.id]?.name || clean(r.nickname) || "익명 간호사"]));
+  }
+  function createClaudeBoard() {
+    return {
+      kind: "claude",
+      label: "claude.ai 공유 랭킹",
+      async status() {
+        const s = await connect();
+        return s ? { available: true, canWrite: s.canWrite } : { available: false, canWrite: false };
+      },
+      submit: (summary, player, localTotal) => submitScore({ ...summary, localTotal }),
+      setNickname: async (name) => await setNickname(name) ? { ok: true, nickname: name } : { ok: false, reason: "network" },
+      async getNickname() {
+        const s = await connect();
+        if (!s?.id) return "";
+        try {
+          const d = await s.db.collection(COLLECTION).doc(s.id).get();
+          return d.exists ? d.data().nickname || "" : "";
+        } catch {
+          return "";
+        }
+      },
+      watch(n, player, onRows, onError) {
+        let unsub = null, stop = false;
+        connect().then((s) => {
+          if (stop) return;
+          if (!s) return onError("offline");
+          unsub = watchTop(s, n, async (rows) => {
+            const names = await namesFor(s, rows);
+            const list = rows.map((r, i) => ({
+              key: r.id,
+              rank: i + 1,
+              name: names[r.id],
+              total: r.total ?? 0,
+              best: r.best ?? 0,
+              games: r.games ?? 0,
+              answered: r.answered ?? 0,
+              correct: r.correct ?? 0,
+              isMe: r.id === s.id
+            }));
+            if (!stop) onRows(list, list.find((r) => r.isMe) ?? null, list.length);
+          }, onError);
+        });
+        return () => {
+          stop = true;
+          unsub?.();
+        };
+      }
+    };
+  }
+
+  // src/ui/services/leaderboard/player.js
+  function rand() {
+    try {
+      if (globalThis.crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, "");
+    } catch {
+    }
+    let s = "";
+    for (let i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
+    return s;
+  }
+  function ensurePlayer(ctx) {
+    if (!ctx.data.player?.id) ctx.update((d) => ({ ...d, player: { id: "p" + rand(), token: "t" + rand(), nickname: "" } }));
+    return ctx.data.player;
+  }
+  var setLocalNickname = (ctx, nickname) => ctx.update((d) => ({ ...d, player: { ...d.player, nickname } }));
+
+  // src/ui/services/leaderboard/index.js
+  var board = null;
+  function getBoard() {
+    board ?? (board = LEADERBOARD.sheetUrl ? createSheetBoard(LEADERBOARD.sheetUrl, LEADERBOARD) : createClaudeBoard());
+    return board;
+  }
+
+  // src/ui/components/hall-of-fame.js
+  function createHallOfFame(ctx) {
+    const champ = h("span", { class: "hof-champ" }, h("span", { class: "hof-wait" }, "1위 불러오는 중…"));
+    const el = h(
+      "button",
+      { type: "button", class: "hof", "aria-label": "명예의 전당 — 랭킹 보기", onclick: () => ctx.go("ranking") },
+      // 1줄: 제목 · 랭킹 보기 / 2줄: 1위 닉네임을 크게
+      h("span", { class: "hof-title" }, h("span", { class: "hof-trophy", "aria-hidden": "true" }, "🏆"), h("b", {}, "명예의 전당")),
+      h("span", { class: "hof-go" }, "랭킹 보기 ›"),
+      champ
+    );
+    let stop = null, alive = true;
+    const show = (...nodes) => alive && fill(champ, ...nodes);
+    const board2 = getBoard(), player = ensurePlayer(ctx);
+    board2.status().then((st) => {
+      if (!alive) return;
+      if (!st.available) return show(h("span", { class: "hof-wait" }, `내 점수 ${(ctx.data.xp ?? 0).toLocaleString()}점 · 랭킹 보기`));
+      stop = board2.watch(1, player, (rows) => {
+        const top = rows[0];
+        if (!top || !(top.total > 0)) return show(h("span", { class: "hof-wait" }, "첫 번째 주인공을 기다리는 중!"));
+        const name = h("b", { class: "hof-name" });
+        name.textContent = top.name || "익명 간호사";
+        show(
+          h("span", { class: "hof-crown", "aria-hidden": "true" }, "👑"),
+          h("span", { class: "hof-who" }, h("small", {}, top.isMe ? "내가 1위!" : "현재 1위"), name),
+          h("span", { class: "hof-pts" }, `${(top.total ?? 0).toLocaleString()}점`)
+        );
+      }, () => show(h("span", { class: "hof-wait" }, "랭킹 보기")));
+    });
+    return { el, destroy() {
+      alive = false;
+      stop?.();
+    } };
+  }
+
   // src/config/modes.js
   var MODES = [
     { id: "practice", label: "연습", icon: "📘", desc: "시간 제한 없이 해설과 함께", timed: false, lives: false, dueOnly: false },
@@ -6527,9 +6881,11 @@ select {
       },
       MONITOR_VIEWS.map((v) => h("option", { value: v.id, selected: v.id === ctx.data.settings.monitorView }, v.label))
     );
+    const hof = createHallOfFame(ctx);
     root.append(h(
       "div",
       { class: "screen home" },
+      hof.el,
       h(
         "header",
         { class: "home-head" },
@@ -6639,6 +6995,7 @@ select {
       ),
       h("p", { class: "disclaimer" }, "교육용 보조 도구입니다. 실제 처치는 기관 프로토콜과 최신 가이드라인 원문을 따르세요.")
     ));
+    return () => hof.destroy();
   }
 
   // src/ui/screens/play.js
@@ -6646,205 +7003,6 @@ select {
   __export(play_exports, {
     render: () => render2
   });
-
-  // src/config/leaderboard.js
-  var LEADERBOARD = {
-    sheetUrl: "https://script.google.com/macros/s/AKfycbzId99BdjjhQt4d2dTxvdAYDW442puNvaYiD3LbJ6qORMinjiOpXoL1D1ehKxIMV_XneA/exec",
-    pollSeconds: 30,
-    // 구글 시트 랭킹 새로고침 간격
-    top: 50
-  };
-
-  // src/ui/services/leaderboard/sheet.js
-  function createSheetBoard(url, { pollSeconds = 30 } = {}) {
-    const post = async (body) => {
-      const r = await fetch(url, { method: "POST", cache: "no-store", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body) });
-      return r.json();
-    };
-    return {
-      kind: "sheet",
-      label: "공유 랭킹 (구글 시트)",
-      status: async () => ({ available: true, canWrite: true }),
-      async submit({ points, best, answered, correct }, player) {
-        try {
-          const r = await post({ action: "submit", id: player.id, token: player.token, nickname: player.nickname, points, best, answered, correct });
-          return r.ok ? { ok: true, total: r.total, nickname: r.nickname, nickTaken: !!r.nickTaken } : { ok: false, reason: r.error };
-        } catch {
-          return { ok: false, reason: "network" };
-        }
-      },
-      // 결과: {ok:true, nickname} · {ok:false, reason:'taken' | 'network' | …}
-      async setNickname(name, player) {
-        try {
-          const r = await post({ action: "nick", id: player.id, token: player.token, nickname: name });
-          return r.ok ? { ok: true, nickname: r.nickname } : { ok: false, reason: r.error };
-        } catch {
-          return { ok: false, reason: "network" };
-        }
-      },
-      getNickname: async (player) => player.nickname || "",
-      // 일정 간격으로 다시 읽음. 반환값 = 멈춤 함수
-      watch(n, player, onRows, onError) {
-        let stop = false, timer2 = 0;
-        const load = async () => {
-          try {
-            const r = await (await fetch(`${url}?action=top&limit=${n}&me=${encodeURIComponent(player.id)}&t=${Date.now()}`, { cache: "no-store" })).json();
-            if (stop) return;
-            if (!r.ok) throw new Error(r.error);
-            onRows(r.rows.map((x) => ({ key: `${x.rank}`, ...x, name: x.nickname })), r.me && { ...r.me, name: r.me.nickname }, r.players);
-          } catch {
-            if (!stop) onError("network");
-          }
-          if (!stop) timer2 = setTimeout(load, pollSeconds * 1e3);
-        };
-        load();
-        return () => {
-          stop = true;
-          clearTimeout(timer2);
-        };
-      }
-    };
-  }
-
-  // src/ui/services/leaderboard/claude.js
-  var COLLECTION = "scores";
-  var NICK_MAX = 12;
-  var conn = null;
-  function connect() {
-    if (conn) return conn;
-    conn = (async () => {
-      const c = globalThis.claude;
-      if (!c || typeof c.use !== "function") return null;
-      const [db, user] = await Promise.all([c.use("db"), c.use("user")]);
-      if (!db || !user) return null;
-      const id28 = await user.id();
-      const canWrite = await user.can("data.write");
-      return { db, user, id: id28, canWrite: canWrite !== false && !!id28 };
-    })().catch(() => null);
-    return conn;
-  }
-  var clean = (s) => String(s ?? "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, NICK_MAX);
-  async function submitScore({ points, best = 0, answered = 0, correct = 0, localTotal = 0 }) {
-    const s = await connect();
-    if (!s?.canWrite) return { ok: false, reason: s ? "readonly" : "offline" };
-    try {
-      const ref = s.db.collection(COLLECTION).doc(s.id);
-      const snap = await ref.get();
-      const cur = snap.exists ? snap.data() : null;
-      const total = cur ? (Number(cur.total) || 0) + points : Math.max(localTotal, points);
-      await ref.set({
-        total: Math.round(total),
-        best: Math.max(Number(cur?.best) || 0, best),
-        games: (Number(cur?.games) || 0) + 1,
-        answered: (Number(cur?.answered) || 0) + answered,
-        correct: (Number(cur?.correct) || 0) + correct,
-        nickname: clean(cur?.nickname),
-        updatedAt: Date.now()
-      });
-      return { ok: true, total };
-    } catch (e) {
-      if (e?.code === "invalid_argument" && s) s.canWrite = false;
-      return { ok: false, reason: e?.code ?? "error" };
-    }
-  }
-  async function setNickname(name) {
-    const s = await connect();
-    if (!s?.canWrite) return false;
-    try {
-      const ref = s.db.collection(COLLECTION).doc(s.id);
-      const snap = await ref.get();
-      if (snap.exists) await ref.update({ nickname: clean(name), updatedAt: Date.now() });
-      else await ref.set({ total: 0, best: 0, games: 0, answered: 0, correct: 0, nickname: clean(name), updatedAt: Date.now() });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  function watchTop(s, n, onRows, onError) {
-    return s.db.collection(COLLECTION).orderBy("total", "desc").limit(n).onSnapshot(
-      (snap) => onRows(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-      (e) => onError?.(e?.code ?? "error")
-    );
-  }
-  async function namesFor(s, rows) {
-    let profiles = {};
-    try {
-      profiles = await s.user.profiles(rows.map((r) => r.id));
-    } catch {
-    }
-    return Object.fromEntries(rows.map((r) => [r.id, profiles[r.id]?.name || clean(r.nickname) || "익명 간호사"]));
-  }
-  function createClaudeBoard() {
-    return {
-      kind: "claude",
-      label: "claude.ai 공유 랭킹",
-      async status() {
-        const s = await connect();
-        return s ? { available: true, canWrite: s.canWrite } : { available: false, canWrite: false };
-      },
-      submit: (summary, player, localTotal) => submitScore({ ...summary, localTotal }),
-      setNickname: async (name) => await setNickname(name) ? { ok: true, nickname: name } : { ok: false, reason: "network" },
-      async getNickname() {
-        const s = await connect();
-        if (!s?.id) return "";
-        try {
-          const d = await s.db.collection(COLLECTION).doc(s.id).get();
-          return d.exists ? d.data().nickname || "" : "";
-        } catch {
-          return "";
-        }
-      },
-      watch(n, player, onRows, onError) {
-        let unsub = null, stop = false;
-        connect().then((s) => {
-          if (stop) return;
-          if (!s) return onError("offline");
-          unsub = watchTop(s, n, async (rows) => {
-            const names = await namesFor(s, rows);
-            const list = rows.map((r, i) => ({
-              key: r.id,
-              rank: i + 1,
-              name: names[r.id],
-              total: r.total ?? 0,
-              best: r.best ?? 0,
-              games: r.games ?? 0,
-              answered: r.answered ?? 0,
-              correct: r.correct ?? 0,
-              isMe: r.id === s.id
-            }));
-            if (!stop) onRows(list, list.find((r) => r.isMe) ?? null, list.length);
-          }, onError);
-        });
-        return () => {
-          stop = true;
-          unsub?.();
-        };
-      }
-    };
-  }
-
-  // src/ui/services/leaderboard/player.js
-  function rand() {
-    try {
-      if (globalThis.crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, "");
-    } catch {
-    }
-    let s = "";
-    for (let i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
-    return s;
-  }
-  function ensurePlayer(ctx) {
-    if (!ctx.data.player?.id) ctx.update((d) => ({ ...d, player: { id: "p" + rand(), token: "t" + rand(), nickname: "" } }));
-    return ctx.data.player;
-  }
-  var setLocalNickname = (ctx, nickname) => ctx.update((d) => ({ ...d, player: { ...d.player, nickname } }));
-
-  // src/ui/services/leaderboard/index.js
-  var board = null;
-  function getBoard() {
-    board ?? (board = LEADERBOARD.sheetUrl ? createSheetBoard(LEADERBOARD.sheetUrl, LEADERBOARD) : createClaudeBoard());
-    return board;
-  }
 
   // src/config/artifacts.js
   var LIGHT_NOISE = [
