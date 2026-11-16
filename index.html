@@ -6445,6 +6445,7 @@ select {
     { id: "games", label: "🔥 최다 플레이", short: "플레이", unit: "판" }
   ];
   var HALL_OF_FAME_SORT = "best";
+  var RANKED_MODES = ["challenge"];
 
   // src/ui/services/leaderboard/sheet.js
   function createSheetBoard(url, { pollSeconds = 30 } = {}) {
@@ -6656,7 +6657,7 @@ select {
     const board2 = getBoard(), player = ensurePlayer(ctx);
     board2.status().then((st) => {
       if (!alive) return;
-      if (!st.available) return show(h("span", { class: "hof-wait" }, `내 점수 ${(ctx.data.xp ?? 0).toLocaleString()}점 · 랭킹 보기`));
+      if (!st.available) return show(h("span", { class: "hof-wait" }, `내 도전 점수 ${(ctx.data.xp ?? 0).toLocaleString()}점 · 랭킹 보기`));
       const kind = RANKINGS.find((r) => r.id === HALL_OF_FAME_SORT);
       stop = board2.watch(1, player, (rows) => {
         const top = rows[0], value = top?.[kind.id] ?? 0;
@@ -6679,7 +6680,7 @@ select {
   // src/config/modes.js
   var MODES = [
     { id: "practice", label: "연습", icon: "📘", desc: "시간 제한 없이 해설과 함께", timed: false, lives: false, dueOnly: false },
-    { id: "challenge", label: "도전", icon: "⚡", desc: "제한 시간 · 목숨 3개 · 콤보 점수", timed: true, lives: true, dueOnly: false },
+    { id: "challenge", label: "도전", icon: "⚡", desc: "제한 시간 · 목숨 3개 · 콤보 점수 · 🏆 랭킹 반영", timed: true, lives: true, dueOnly: false },
     { id: "review", label: "복습", icon: "🔁", desc: "틀렸거나 잊을 때가 된 문제만", timed: false, lives: false, dueOnly: true }
   ];
   var modeById = (id28) => MODES.find((m) => m.id === id28) ?? MODES[0];
@@ -6973,7 +6974,7 @@ select {
           "button",
           { type: "button", class: "mode-card", onclick: () => ctx.go("ranking") },
           h("span", { class: "mode-icon" }, "🏆"),
-          h("span", { class: "mode-body" }, h("b", {}, "랭킹"), h("small", {}, "맞힌 점수를 쌓아 순위 올리기")),
+          h("span", { class: "mode-body" }, h("b", {}, "랭킹"), h("small", {}, "⚡ 도전 모드 점수로 순위 경쟁")),
           h("span", { class: "mode-extra" }, `${(ctx.data.xp ?? 0).toLocaleString()}점`)
         ),
         h(
@@ -8882,13 +8883,16 @@ select {
       const endSkill = ctx.data.skill ?? 1;
       summary.levelLabel = auto ? `자동 난이도 · 지금 ${DIFFICULTY[rankOf(endSkill)]}` : `${DIFFICULTY[fixed.rank]} ${fixed.label}`;
       if (Math.abs(endSkill - startSkill) >= 5e-3) summary.skillChange = `실력 점수 ${startSkill.toFixed(2)} → ${endSkill.toFixed(2)} ${endSkill > startSkill ? "▲" : "▼"}`;
-      let localTotal = 0;
-      ctx.update((d) => {
-        localTotal = (d.xp ?? 0) + summary.score;
-        return { ...d, xp: localTotal };
-      });
-      summary.xpTotal = localTotal;
-      summary.rankSync = getBoard().submit({ points: summary.score, best: summary.score, answered: summary.answered, correct: summary.correct }, ensurePlayer(ctx), localTotal);
+      summary.ranked = RANKED_MODES.includes(mode.id);
+      if (summary.ranked) {
+        let localTotal = 0;
+        ctx.update((d) => {
+          localTotal = (d.xp ?? 0) + summary.score;
+          return { ...d, xp: localTotal };
+        });
+        summary.xpTotal = localTotal;
+        summary.rankSync = getBoard().submit({ points: summary.score, best: summary.score, answered: summary.answered, correct: summary.correct }, ensurePlayer(ctx), localTotal);
+      }
       if (mode.id === "challenge") {
         let best;
         ctx.update((d) => {
@@ -8932,12 +8936,12 @@ select {
     });
     const missed = summary.missed.map((m) => {
       const r = rhythmById[m.rhythmId];
-      const label9 = m.kind === "rhythm" ? r.name : scenarioById[m.scenarioId]?.question;
+      const label9 = m.kind === "action" ? scenarioById[m.scenarioId]?.question : r.name;
       return h("li", {}, h(
         "button",
         { type: "button", class: "missed", onclick: () => ctx.go("rhythm", { id: r.id }) },
         h("span", { class: "badge" }, STAGE_LABEL[m.kind]),
-        h("span", {}, m.kind === "rhythm" ? label9 : `${r.name} — ${label9}`),
+        h("span", {}, m.kind === "action" ? `${r.name} — ${label9}` : label9),
         h("span", { class: "go" }, "›")
       ));
     });
@@ -8953,7 +8957,7 @@ select {
         `+${summary.score}점`,
         summary.isNewBest && h("span", { class: "new-best" }, "도전 최고 기록!")
       ),
-      summary.xpTotal != null && h("p", { class: "xp-line" }, `누적 ${summary.xpTotal.toLocaleString()}점`, " ", rankNote),
+      summary.ranked ? h("p", { class: "xp-line" }, `도전 누적 ${(summary.xpTotal ?? 0).toLocaleString()}점`, " ", rankNote) : h("p", { class: "muted small" }, "연습 · 복습 점수는 랭킹에 들어가지 않아요. 랭킹은 ⚡ 도전 모드 점수만 올라갑니다."),
       h(
         "div",
         { class: "stats" },
@@ -10049,13 +10053,14 @@ select {
     const list = h("ol", { class: "rank-list" });
     const nickBox = h("div");
     const tabs = h("nav", { class: "tabs rank-tabs", role: "tablist" }, RANKINGS.map((r) => h("button", { type: "button", class: "tab", role: "tab", "data-id": r.id, onclick: () => open(r) }, r.label)));
-    const myLocal = () => fill(me, h("h3", {}, "내 점수"), h("p", { class: "rank-total" }, `${local.toLocaleString()}점`), h("p", { class: "muted small" }, "이 기기 누적"));
+    const myLocal = () => fill(me, h("h3", {}, "내 점수"), h("p", { class: "rank-total" }, `${local.toLocaleString()}점`), h("p", { class: "muted small" }, "이 기기 도전 모드 누적"));
     myLocal();
     root.append(h(
       "div",
       { class: "screen ranking" },
       h("header", { class: "sub-head" }, h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.back() }, "‹ 뒤로"), h("h1", {}, "🏆 명예의 전당")),
-      h("p", { class: "muted small" }, `${board2.label} · 모든 모드에서 맞힌 점수가 쌓입니다. 빠르게 · 연속으로 · 어려운 문제(★★ ×1.5 · ★★★ ×2)일수록 점수가 커집니다.`),
+      h("p", { class: "muted small" }, `${board2.label} · ⚡ 도전 모드 점수만 랭킹에 올라갑니다. 빠르게 · 연속으로 · 어려운 문제(★★ ×1.5 · ★★★ ×2)일수록 점수가 커집니다.`),
+      h("button", { type: "button", class: "btn primary block", onclick: () => ctx.go("play", { mode: "challenge" }) }, "⚡ 도전 모드로 순위 올리기"),
       tabs,
       me,
       status,
