@@ -299,6 +299,15 @@ select {
 .badge.src-clin {
   color: var(--clin);
 }
+.btn.danger {
+  color: #fff;
+  background: var(--red);
+  border-color: var(--red);
+  box-shadow: 0 0 14px rgb(255 59 107 / .4);
+}
+.btn.danger:disabled {
+  opacity: .5;
+}
 
 /* src/styles/home.css */
 .home-head {
@@ -1460,6 +1469,21 @@ select {
 .rank-tabs .tab {
   font-size: .74rem;
   padding: 9px 4px;
+}
+.danger-zone {
+  --c: var(--red);
+}
+.danger-zone h3 {
+  color: var(--red);
+}
+.admin .rank-row .btn.danger {
+  grid-row: 1 / 3;
+  grid-column: 3;
+  min-height: 34px;
+  padding: 4px 10px;
+}
+.admin .rank-row {
+  grid-template-columns: 2.4em 1fr auto;
 }
 
 /* src/styles/analysis.css */
@@ -6475,6 +6499,14 @@ select {
         }
       },
       getNickname: async (player) => player.nickname || "",
+      // 관리자: op = check · reset · delete. 결과 {ok, …} · {ok:false, error}
+      async admin(key, op, extra = {}) {
+        try {
+          return await post({ action: "admin", key, op, ...extra });
+        } catch {
+          return { ok: false, error: "network" };
+        }
+      },
       // 일정 간격으로 다시 읽음. sort = best · total · games. 반환값 = 멈춤 함수
       // 서버가 정렬을 모르는 옛 버전이어도 맞도록 넉넉히 받아 여기서 다시 정렬
       watch(n, player, onRows, onError, { sort = "total" } = {}) {
@@ -7006,7 +7038,8 @@ select {
           ctx.toast("기록을 지웠습니다");
           ctx.go("home", {}, { replace: true });
         } }, "기록 초기화"),
-        h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.go("about") }, "가이드라인 · 안내")
+        h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.go("about") }, "가이드라인 · 안내"),
+        h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.go("admin") }, "🔐 관리자")
       ),
       h("p", { class: "disclaimer" }, "교육용 보조 도구입니다. 실제 처치는 기관 프로토콜과 최신 가이드라인 원문을 따르세요.")
     ));
@@ -9535,7 +9568,7 @@ select {
       stripSlot,
       info
     );
-    function render10() {
+    function render11() {
       current?.view.destroy();
       current = createBeatView({ ecg: variant?.ecg ?? { pattern: "sinus", rate: 75 }, rhythmId: variant?.rhythm });
       const { view, beat, next, beats, from, sec } = current;
@@ -9581,11 +9614,11 @@ select {
             { class: "abn-list" },
             h("button", { type: "button", class: "abn-btn" + (variant ? "" : " on"), onclick: () => {
               variant = null;
-              render10();
+              render11();
             } }, "정상"),
             comp.abnormal.map((v) => h("button", { type: "button", class: "abn-btn" + (variant === v ? " on" : ""), onclick: () => {
               variant = v;
-              render10();
+              render11();
             } }, v.label))
           ),
           variant && h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.go("rhythm", { id: variant.rhythm }) }, `📖 도감: ${ctx.content.rhythmById[variant.rhythm].name} ›`)
@@ -9601,10 +9634,10 @@ select {
       onclick: () => {
         comp = c;
         variant = null;
-        render10();
+        render11();
       }
     }, c.label)));
-    return { el, start: render10, destroy: () => current?.view.destroy() };
+    return { el, start: render11, destroy: () => current?.view.destroy() };
   }
 
   // src/config/analysis.js
@@ -9747,7 +9780,7 @@ select {
       { class: "rhythm-select", "aria-label": "리듬 고르기", onchange: (e) => {
         rhythm = ctx.content.rhythmById[e.target.value];
         quiz = null;
-        render10();
+        render11();
       } },
       GROUPS.map((g2) => h("optgroup", { label: g2.label }, rhythms.filter((r) => r.group === g2.id).map((r) => h("option", { value: r.id }, r.name))))
     );
@@ -9764,7 +9797,7 @@ select {
           rhythm = rhythms[Math.floor(Math.random() * rhythms.length)];
           seed++;
           quiz = null;
-          render10();
+          render11();
         } }, "🎲 무작위"),
         h("label", { class: "switch", for: "opt-marks" }, marks, h("span", {}, "P · QRS · T 자동 표시"))
       ),
@@ -9786,7 +9819,7 @@ select {
         )
       )
     );
-    function render10() {
+    function render11() {
       ms?.destroy();
       select.value = rhythm.id;
       ms = createMeasuredStrip(rhythm.ecg, { seed, autoMarks: marks.checked });
@@ -9798,7 +9831,7 @@ select {
       const pool = rhythms.filter((r) => measurable(truthOf(renderStrip(r.ecg, { duration: 8, fs: 250, seed: seed + 1 }))).length);
       rhythm = pool[Math.floor(Math.random() * pool.length)];
       seed++;
-      render10();
+      render11();
       const kinds = measurable(ms.truth).filter((k) => k !== "qt" || Math.random() < 0.3);
       quiz = { kind: kinds[Math.floor(Math.random() * kinds.length)], result: null };
       marks.checked = false;
@@ -9839,7 +9872,7 @@ select {
       );
       if (!r) queueMicrotask(() => input.focus({ preventScroll: true }));
     }
-    return { el, start: render10, destroy: () => ms?.destroy() };
+    return { el, start: render11, destroy: () => ms?.destroy() };
   }
 
   // src/content/analysis.js
@@ -10226,8 +10259,127 @@ select {
     queueMicrotask(() => input.focus({ preventScroll: true }));
   }
 
+  // src/ui/screens/admin.js
+  var admin_exports = {};
+  __export(admin_exports, {
+    render: () => render10
+  });
+  var ERR = {
+    no_admin: "랭킹 서버에 관리자 비밀번호가 아직 없습니다. Apps Script → 프로젝트 설정 → 스크립트 속성에 ADMIN_PASSWORD 를 추가하고 새 버전으로 배포하세요.",
+    denied: "비밀번호가 틀렸습니다.",
+    locked: "너무 많이 틀려 10분간 잠겼습니다. 잠시 뒤 다시 시도하세요.",
+    network: "랭킹 서버에 연결하지 못했습니다.",
+    unknown_action: "랭킹 서버 코드가 예전 버전입니다. 새 Code.gs 를 붙여넣고 새 버전으로 배포하세요."
+  };
+  var errText = (e) => ERR[e] ?? `실패했습니다 (${e}).`;
+  function render10(root, ctx) {
+    const board2 = getBoard();
+    const body = h("div", { class: "admin-body" });
+    root.append(h(
+      "div",
+      { class: "screen admin" },
+      h("header", { class: "sub-head" }, h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.back() }, "‹ 뒤로"), h("h1", {}, "🔐 관리자 모드")),
+      body
+    ));
+    if (board2.kind !== "sheet" || !board2.admin) {
+      fill(body, h("p", { class: "warn-box" }, "관리자 모드는 구글 시트 랭킹에서만 쓸 수 있습니다."));
+      return;
+    }
+    let key = "", alive = true, stop = null;
+    const msg = h("p", { class: "term-status", "aria-live": "polite" });
+    const pw = h("input", { type: "password", class: "term-input", id: "admin-pw", autocomplete: "current-password", placeholder: "관리자 비밀번호", "aria-label": "관리자 비밀번호" });
+    const loginBtn = h("button", { type: "submit", class: "btn primary block" }, "확인");
+    fill(body, h(
+      "form",
+      { class: "card", onsubmit: async (e) => {
+        e.preventDefault();
+        if (!pw.value) return;
+        loginBtn.disabled = true;
+        msg.textContent = "확인 중…";
+        msg.className = "term-status";
+        const r = await board2.admin(pw.value, "check");
+        loginBtn.disabled = false;
+        if (!r.ok) {
+          msg.textContent = errText(r.error);
+          msg.className = "term-status warn";
+          return;
+        }
+        key = pw.value;
+        panel(r.players);
+      } },
+      h("label", { class: "block-title", for: "admin-pw" }, "관리자 비밀번호"),
+      h("div", { class: "term" }, h("span", { class: "term-prompt", "aria-hidden": "true" }, ">"), pw),
+      msg,
+      loginBtn,
+      h("p", { class: "muted small" }, "비밀번호는 랭킹 서버(Apps Script)의 스크립트 속성 ADMIN_PASSWORD 와 같아야 합니다. 이 기기에는 저장하지 않습니다.")
+    ));
+    queueMicrotask(() => pw.focus());
+    function panel(players) {
+      const count = h("b", {}, String(players));
+      const confirmInput = h("input", { type: "text", class: "nick-input", placeholder: "'초기화' 입력", "aria-label": "확인 문구" });
+      const resetBtn = h("button", { type: "button", class: "btn danger", onclick: async () => {
+        if (confirmInput.value.trim() !== "초기화") return ctx.toast("확인 칸에 '초기화' 라고 입력하세요");
+        resetBtn.disabled = true;
+        const r = await board2.admin(key, "reset");
+        resetBtn.disabled = false;
+        if (!r.ok) return ctx.toast(errText(r.error), 3500);
+        confirmInput.value = "";
+        ctx.toast(`랭킹을 초기화했습니다 (${r.cleared}명). 백업 시트: ${r.backup}`, 4500);
+        refresh();
+      } }, "🗑 랭킹 전체 초기화");
+      const list = h("ol", { class: "rank-list" });
+      fill(
+        body,
+        h("section", { class: "card" }, h("h3", {}, "현재 참여"), h("p", { class: "rank-total" }, count, "명")),
+        h(
+          "section",
+          { class: "card danger-zone" },
+          h("h3", {}, "⚠️ 랭킹 전체 초기화"),
+          h("p", { class: "muted small" }, '모든 플레이어의 점수 · 기록을 지웁니다. 지우기 전에 지금 랭킹을 같은 스프레드시트의 "backup 날짜" 시트로 자동 복사해 둡니다.'),
+          h("div", { class: "tool-row" }, confirmInput, resetBtn)
+        ),
+        h("section", { class: "block" }, h("h2", { class: "block-title" }, "플레이어 한 명씩 삭제 (누적 점수 순)"), list),
+        h("button", { type: "button", class: "btn ghost block", onclick: () => {
+          key = "";
+          ctx.go("home", {}, { replace: true });
+        } }, "관리자 모드 나가기")
+      );
+      function refresh() {
+        stop?.();
+        stop = board2.watch(100, ensurePlayer(ctx), (rows, _, n) => {
+          if (!alive) return;
+          count.textContent = String(n);
+          fill(list, rows.length ? rows.map((r) => {
+            const name = h("span", { class: "rank-name" });
+            name.textContent = r.name;
+            return h(
+              "li",
+              { class: "rank-row" },
+              h("span", { class: "rank-no" }, String(r.rank)),
+              name,
+              h("button", { type: "button", class: "btn small danger", onclick: async () => {
+                if (!confirm(`'${r.name}' 의 기록을 삭제할까요?`)) return;
+                const res = await board2.admin(key, "delete", { nickname: r.name });
+                ctx.toast(res.ok ? `'${res.deleted}' 삭제` : errText(res.error));
+                if (res.ok) refresh();
+              } }, "삭제"),
+              h("small", { class: "rank-sub" }, `누적 ${(r.total ?? 0).toLocaleString()}점 · 1회 최고 ${(r.best ?? 0).toLocaleString()}점 · ${r.games ?? 0}판`)
+            );
+          }) : [h("p", { class: "muted small" }, "플레이어가 없습니다.")]);
+        }, () => {
+        }, { sort: "total" });
+      }
+      refresh();
+    }
+    return () => {
+      alive = false;
+      key = "";
+      stop?.();
+    };
+  }
+
   // src/ui/app.js
-  var SCREENS = { home: home_exports, play: play_exports, result: result_exports, library: library_exports, rhythm: rhythm_exports, about: about_exports, analysis: analysis_exports, ranking: ranking_exports, welcome: welcome_exports };
+  var SCREENS = { home: home_exports, play: play_exports, result: result_exports, library: library_exports, rhythm: rhythm_exports, about: about_exports, analysis: analysis_exports, ranking: ranking_exports, welcome: welcome_exports, admin: admin_exports };
   function startApp(root) {
     const store = createStore(browserStorage(), STORAGE_KEY);
     let data = store.load();

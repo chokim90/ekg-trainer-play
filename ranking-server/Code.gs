@@ -8,6 +8,8 @@
  *   POST {action:'submit', id, token, nickname, points, best, answered, correct}  → 점수 누적
  *   POST {action:'nick',   id, token, nickname}                                   → 닉네임 변경 (중복이면 error:'taken')
  *   GET  ?action=check&nickname=…&me=<id>                                          → 닉네임 사용 가능 여부
+ *   POST {action:'admin', key, op:'check' | 'reset' | 'delete', nickname?}          → 관리자 (비밀번호 = 스크립트 속성 ADMIN_PASSWORD)
+ *        reset 은 지우기 전에 'backup 날짜' 시트로 복사해 둠. 8번 틀리면 10분 잠금
  *
  * 시트 'scores' 한 줄 = 플레이어 한 명. 이상한 기록은 시트에서 그 줄을 지우면 됩니다.
  * 토큰은 원문이 아니라 해시만 저장합니다 (같은 브라우저만 그 기록에 점수를 더할 수 있게).
@@ -33,6 +35,7 @@ function doPost(e){
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try{
+    if(body.action === 'admin') return json_(admin_(body));
     var rows = readRows_();
     var out = body.action === 'submit' ? submit_(rows, body, Date.now())
             : body.action === 'nick' ? rename_(rows, body, Date.now())
@@ -112,6 +115,47 @@ function top_(rows, limit, me, sort){
 function indexOf_(rows, id){
   for(var i = 0; i < rows.length; i++) if(rows[i].id === id) return i;
   return -1;
+}
+
+// ───────── 관리자 ─────────
+function admin_(b){
+  var pw = PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD');
+  if(!pw) return {ok: false, error: 'no_admin'};
+  var cache = CacheService.getScriptCache(), fails = Number(cache.get('admin_fails') || 0);
+  if(fails >= 8) return {ok: false, error: 'locked'};
+  if(String(b.key || '') !== String(pw)){
+    cache.put('admin_fails', String(fails + 1), 600);
+    return {ok: false, error: 'denied'};
+  }
+  cache.remove('admin_fails');
+  var rows = readRows_();
+  if(b.op === 'check') return {ok: true, players: rows.length};
+  if(b.op === 'reset'){
+    var backup = backup_();
+    clearRows_();
+    return {ok: true, cleared: rows.length, backup: backup};
+  }
+  if(b.op === 'delete'){
+    var k = nickKey_(b.nickname);
+    for(var i = 0; i < rows.length; i++){
+      if(k && nickKey_(rows[i].nickname) === k){ sheet_().deleteRow(i + 2); return {ok: true, deleted: String(rows[i].nickname)}; }
+    }
+    return {ok: false, error: 'not_found'};
+  }
+  return {ok: false, error: 'unknown_op'};
+}
+
+// 지금 랭킹을 새 시트로 복사 (초기화 전 안전장치)
+function backup_(){
+  var values = sheet_().getDataRange().getValues();
+  var name = 'backup ' + Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm:ss');
+  spreadsheet_().insertSheet(name).getRange(1, 1, values.length, values[0].length).setValues(values);
+  return name;
+}
+
+function clearRows_(){
+  var sh = sheet_(), last = sh.getLastRow();
+  if(last > 1) sh.deleteRows(2, last - 1);
 }
 
 // ───────── 시트 · 해시 · 응답 ─────────
