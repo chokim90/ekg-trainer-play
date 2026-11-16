@@ -1457,6 +1457,10 @@ select {
   border: 1px solid var(--line);
   font: inherit;
 }
+.rank-tabs .tab {
+  font-size: .74rem;
+  padding: 9px 4px;
+}
 
 /* src/styles/analysis.css */
 .small {
@@ -6435,6 +6439,12 @@ select {
     // 구글 시트 랭킹 새로고침 간격
     top: 50
   };
+  var RANKINGS = [
+    { id: "best", label: "🎯 1회 최고 득점", short: "1회 최고", unit: "점" },
+    { id: "total", label: "📈 누적 최고 점수", short: "누적", unit: "점" },
+    { id: "games", label: "🔥 최다 플레이", short: "플레이", unit: "판" }
+  ];
+  var HALL_OF_FAME_SORT = "best";
 
   // src/ui/services/leaderboard/sheet.js
   function createSheetBoard(url, { pollSeconds = 30 } = {}) {
@@ -6464,15 +6474,18 @@ select {
         }
       },
       getNickname: async (player) => player.nickname || "",
-      // 일정 간격으로 다시 읽음. 반환값 = 멈춤 함수
-      watch(n, player, onRows, onError) {
+      // 일정 간격으로 다시 읽음. sort = best · total · games. 반환값 = 멈춤 함수
+      // 서버가 정렬을 모르는 옛 버전이어도 맞도록 넉넉히 받아 여기서 다시 정렬
+      watch(n, player, onRows, onError, { sort = "total" } = {}) {
         let stop = false, timer2 = 0;
         const load = async () => {
           try {
-            const r = await (await fetch(`${url}?action=top&limit=${n}&me=${encodeURIComponent(player.id)}&t=${Date.now()}`, { cache: "no-store" })).json();
+            const r = await (await fetch(`${url}?action=top&limit=100&sort=${sort}&me=${encodeURIComponent(player.id)}&t=${Date.now()}`, { cache: "no-store" })).json();
             if (stop) return;
             if (!r.ok) throw new Error(r.error);
-            onRows(r.rows.map((x) => ({ key: `${x.rank}`, ...x, name: x.nickname })), r.me && { ...r.me, name: r.me.nickname }, r.players);
+            const all = r.rows.map((x) => ({ ...x, name: x.nickname })).sort((a, b) => (b[sort] ?? 0) - (a[sort] ?? 0) || (b.total ?? 0) - (a.total ?? 0)).map((x, i) => ({ ...x, key: `${i}`, rank: i + 1 }));
+            const mine = all.find((x) => x.isMe) ?? (r.me && (r.sort === sort || !r.sort && sort === "total") ? { ...r.me, name: r.me.nickname } : null);
+            onRows(all.slice(0, n), mine, r.players);
           } catch {
             if (!stop) onError("network");
           }
@@ -6541,8 +6554,8 @@ select {
       return false;
     }
   }
-  function watchTop(s, n, onRows, onError) {
-    return s.db.collection(COLLECTION).orderBy("total", "desc").limit(n).onSnapshot(
+  function watchTop(s, n, onRows, onError, sort = "total") {
+    return s.db.collection(COLLECTION).orderBy(sort, "desc").limit(n).onSnapshot(
       (snap) => onRows(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (e) => onError?.(e?.code ?? "error")
     );
@@ -6575,7 +6588,7 @@ select {
           return "";
         }
       },
-      watch(n, player, onRows, onError) {
+      watch(n, player, onRows, onError, { sort = "total" } = {}) {
         let unsub = null, stop = false;
         connect().then((s) => {
           if (stop) return;
@@ -6594,7 +6607,7 @@ select {
               isMe: r.id === s.id
             }));
             if (!stop) onRows(list, list.find((r) => r.isMe) ?? null, list.length);
-          }, onError);
+          }, onError, sort);
         });
         return () => {
           stop = true;
@@ -6632,7 +6645,7 @@ select {
     const champ = h("span", { class: "hof-champ" }, h("span", { class: "hof-wait" }, "1위 불러오는 중…"));
     const el = h(
       "button",
-      { type: "button", class: "hof", "aria-label": "명예의 전당 — 랭킹 보기", onclick: () => ctx.go("ranking") },
+      { type: "button", class: "hof", "aria-label": "명예의 전당 — 랭킹 보기", onclick: () => ctx.go("ranking", { sort: HALL_OF_FAME_SORT }) },
       // 1줄: 제목 · 랭킹 보기 / 2줄: 1위 닉네임을 크게
       h("span", { class: "hof-title" }, h("span", { class: "hof-trophy", "aria-hidden": "true" }, "🏆"), h("b", {}, "명예의 전당")),
       h("span", { class: "hof-go" }, "랭킹 보기 ›"),
@@ -6644,17 +6657,18 @@ select {
     board2.status().then((st) => {
       if (!alive) return;
       if (!st.available) return show(h("span", { class: "hof-wait" }, `내 점수 ${(ctx.data.xp ?? 0).toLocaleString()}점 · 랭킹 보기`));
+      const kind = RANKINGS.find((r) => r.id === HALL_OF_FAME_SORT);
       stop = board2.watch(1, player, (rows) => {
-        const top = rows[0];
-        if (!top || !(top.total > 0)) return show(h("span", { class: "hof-wait" }, "첫 번째 주인공을 기다리는 중!"));
+        const top = rows[0], value = top?.[kind.id] ?? 0;
+        if (!top || !(value > 0)) return show(h("span", { class: "hof-wait" }, "첫 번째 주인공을 기다리는 중!"));
         const name = h("b", { class: "hof-name" });
         name.textContent = top.name || "익명 간호사";
         show(
           h("span", { class: "hof-crown", "aria-hidden": "true" }, "👑"),
-          h("span", { class: "hof-who" }, h("small", {}, top.isMe ? "내가 1위!" : "현재 1위"), name),
-          h("span", { class: "hof-pts" }, `${(top.total ?? 0).toLocaleString()}점`)
+          h("span", { class: "hof-who" }, h("small", {}, `${kind.short} ${top.isMe ? "· 내가 1위!" : "1위"}`), name),
+          h("span", { class: "hof-pts" }, `${value.toLocaleString()}${kind.unit}`)
         );
-      }, () => show(h("span", { class: "hof-wait" }, "랭킹 보기")));
+      }, () => show(h("span", { class: "hof-wait" }, "랭킹 보기")), { sort: kind.id });
     });
     return { el, destroy() {
       alive = false;
@@ -8874,7 +8888,7 @@ select {
         return { ...d, xp: localTotal };
       });
       summary.xpTotal = localTotal;
-      summary.rankSync = getBoard().submit({ points: summary.score, best: mode.id === "challenge" ? summary.score : 0, answered: summary.answered, correct: summary.correct }, ensurePlayer(ctx), localTotal);
+      summary.rankSync = getBoard().submit({ points: summary.score, best: summary.score, answered: summary.answered, correct: summary.correct }, ensurePlayer(ctx), localTotal);
       if (mode.id === "challenge") {
         let best;
         ctx.update((d) => {
@@ -10026,26 +10040,81 @@ select {
     render: () => render8
   });
   var MEDAL = ["🥇", "🥈", "🥉"];
-  function render8(root, ctx) {
+  var fmt = (v, unit) => `${(v ?? 0).toLocaleString()}${unit}`;
+  function render8(root, ctx, { sort = RANKINGS[0].id } = {}) {
     const board2 = getBoard(), player = ensurePlayer(ctx), local = ctx.data.xp ?? 0;
+    let kind = RANKINGS.find((r) => r.id === sort) ?? RANKINGS[0];
     const status = h("p", { class: "muted small rank-status" }, "랭킹을 불러오는 중…");
-    const me = h("section", { class: "card rank-me" }, h("h3", {}, "내 점수"), h("p", { class: "rank-total" }, `${local.toLocaleString()}점`), h("p", { class: "muted small" }, "이 기기 누적"));
+    const me = h("section", { class: "card rank-me" });
     const list = h("ol", { class: "rank-list" });
     const nickBox = h("div");
+    const tabs = h("nav", { class: "tabs rank-tabs", role: "tablist" }, RANKINGS.map((r) => h("button", { type: "button", class: "tab", role: "tab", "data-id": r.id, onclick: () => open(r) }, r.label)));
+    const myLocal = () => fill(me, h("h3", {}, "내 점수"), h("p", { class: "rank-total" }, `${local.toLocaleString()}점`), h("p", { class: "muted small" }, "이 기기 누적"));
+    myLocal();
     root.append(h(
       "div",
       { class: "screen ranking" },
-      h("header", { class: "sub-head" }, h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.back() }, "‹ 뒤로"), h("h1", {}, "🏆 랭킹")),
+      h("header", { class: "sub-head" }, h("button", { type: "button", class: "btn ghost small", onclick: () => ctx.back() }, "‹ 뒤로"), h("h1", {}, "🏆 명예의 전당")),
       h("p", { class: "muted small" }, `${board2.label} · 모든 모드에서 맞힌 점수가 쌓입니다. 빠르게 · 연속으로 · 어려운 문제(★★ ×1.5 · ★★★ ×2)일수록 점수가 커집니다.`),
+      tabs,
       me,
-      nickBox,
       status,
-      list
+      list,
+      nickBox
     ));
-    let alive = true, unwatch = null, loaded = false;
+    let alive = true, unwatch = null, available = false;
     const timer2 = setTimeout(() => {
-      if (alive && !loaded) status.textContent = "랭킹에 연결하지 못했습니다. 점수는 이 기기에 계속 쌓입니다.";
+      if (alive && !available) status.textContent = "랭킹에 연결하지 못했습니다. 점수는 이 기기에 계속 쌓입니다.";
     }, 1e4);
+    function renderRows(rows, mine, players) {
+      status.textContent = rows.some((r) => (r[kind.id] ?? 0) > 0) ? `참여 ${players}명 · ${kind.label} 상위 ${rows.length}명` : "아직 기록이 없습니다. 한 판 끝내면 첫 번째로 올라갑니다!";
+      if (mine) fill(
+        me,
+        h("h3", {}, `내 순위 · ${kind.short}`),
+        h("p", { class: "rank-total" }, `${mine.rank}위 · ${fmt(mine[kind.id], kind.unit)}`),
+        h("p", { class: "muted small" }, `1회 최고 ${fmt(mine.best, "점")} · 누적 ${fmt(mine.total, "점")} · ${fmt(mine.games, "판")} · 정답률 ${mine.answered ? Math.round(mine.correct / mine.answered * 100) : 0}%`)
+      );
+      else myLocal();
+      fill(list, rows.map((r, i) => {
+        const name = h("span", { class: "rank-name" });
+        name.textContent = r.name || "익명 간호사";
+        const others = RANKINGS.filter((k) => k.id !== kind.id).map((k) => `${k.short} ${fmt(r[k.id], k.unit)}`).join(" · ");
+        return h(
+          "li",
+          { class: "rank-row" + (r.isMe ? " me" : "") },
+          h("span", { class: "rank-no" }, MEDAL[i] ?? String(r.rank ?? i + 1)),
+          name,
+          h("span", { class: "rank-pts" }, fmt(r[kind.id], kind.unit)),
+          h("small", { class: "rank-sub" }, others)
+        );
+      }));
+    }
+    function open(next) {
+      kind = next;
+      tabs.querySelectorAll(".tab").forEach((b) => {
+        const on = b.dataset.id === kind.id;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-selected", String(on));
+      });
+      if (!available) return;
+      unwatch?.();
+      status.textContent = "랭킹을 불러오는 중…";
+      fill(list);
+      unwatch = board2.watch(
+        LEADERBOARD.top,
+        player,
+        (rows, mine, players) => {
+          clearTimeout(timer2);
+          if (alive) renderRows(rows, mine, players);
+        },
+        (code) => {
+          clearTimeout(timer2);
+          if (alive) status.textContent = code === "network" ? "랭킹 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도합니다." : `랭킹을 불러오지 못했습니다 (${code}).`;
+        },
+        { sort: kind.id }
+      );
+    }
+    open(kind);
     board2.status().then(async (st) => {
       if (!alive) return;
       if (!st.available) {
@@ -10053,6 +10122,8 @@ select {
         status.textContent = "랭킹은 claude.ai 에서 로그인한 상태로 열었을 때만 보입니다. 점수는 이 기기에 계속 쌓입니다.";
         return;
       }
+      available = true;
+      open(kind);
       if (!st.canWrite) fill(nickBox, h("p", { class: "warn-box" }, "보기 전용 권한이라 내 점수가 랭킹에 올라가지 않습니다."));
       else {
         const input = h("input", { type: "text", class: "nick-input", maxlength: String(NICK_MAX), placeholder: `닉네임 (${NICK_MAX}자)`, "aria-label": "닉네임" });
@@ -10065,39 +10136,8 @@ select {
           setLocalNickname(ctx, r.ok ? r.nickname || name : name);
           ctx.toast(r.ok ? "닉네임을 저장했습니다" : "이 기기에 저장했습니다 (다음 판에 반영)");
         } }, "저장");
-        fill(
-          nickBox,
-          h("div", { class: "tool-row" }, input, save),
-          h("p", { class: "muted small" }, board2.kind === "sheet" ? "랭킹에는 닉네임만 보입니다. 이 브라우저에서 쌓은 점수는 이 브라우저에서만 이어서 쌓을 수 있어요." : "프로필 이름이 보이지 않는 사람에게는 닉네임이 표시됩니다.")
-        );
+        fill(nickBox, h("h4", { class: "block-title" }, "내 닉네임"), h("div", { class: "tool-row" }, input, save));
       }
-      unwatch = board2.watch(LEADERBOARD.top, player, (rows, mine, players) => {
-        loaded = true;
-        clearTimeout(timer2);
-        if (!alive) return;
-        status.textContent = rows.length ? `참여 ${players}명 · 상위 ${rows.length}명` : "아직 랭킹에 아무도 없습니다. 한 판 끝내면 첫 번째로 올라갑니다!";
-        if (mine) fill(
-          me,
-          h("h3", {}, "내 순위"),
-          h("p", { class: "rank-total" }, `${mine.rank}위 · ${(mine.total ?? 0).toLocaleString()}점`),
-          h("p", { class: "muted small" }, `${mine.games ?? 0}판 · 정답률 ${mine.answered ? Math.round(mine.correct / mine.answered * 100) : 0}% · 도전 최고 ${mine.best ?? 0}점`)
-        );
-        fill(list, rows.map((r, i) => {
-          const name = h("span", { class: "rank-name" });
-          name.textContent = r.name || "익명 간호사";
-          return h(
-            "li",
-            { class: "rank-row" + (r.isMe ? " me" : "") },
-            h("span", { class: "rank-no" }, MEDAL[i] ?? String(r.rank ?? i + 1)),
-            name,
-            h("span", { class: "rank-pts" }, `${(r.total ?? 0).toLocaleString()}점`),
-            h("small", { class: "rank-sub" }, `${r.games ?? 0}판 · 최고 ${r.best ?? 0}`)
-          );
-        }));
-      }, (code) => {
-        clearTimeout(timer2);
-        if (alive && !loaded) status.textContent = code === "network" ? "랭킹 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도합니다." : `랭킹을 불러오지 못했습니다 (${code}).`;
-      });
     });
     return () => {
       alive = false;

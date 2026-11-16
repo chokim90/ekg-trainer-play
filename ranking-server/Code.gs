@@ -3,7 +3,8 @@
  * 설치 방법은 같은 폴더의 README.md 를 보세요.
  * 시트에서 연 Apps Script 에 붙여넣어도 되고, script.google.com 새 프로젝트에 붙여넣어도 됩니다(시트를 스스로 만듦).
  *
- *   GET  ?action=top&limit=50&me=<플레이어 id>  → 상위 랭킹 + 내 순위
+ *   GET  ?action=top&limit=50&me=<플레이어 id>&sort=best|total|games  → 상위 랭킹 + 내 순위
+ *        (best = 1회 최고 득점, total = 누적 점수, games = 플레이 횟수)
  *   POST {action:'submit', id, token, nickname, points, best, answered, correct}  → 점수 누적
  *   POST {action:'nick',   id, token, nickname}                                   → 닉네임 변경 (중복이면 error:'taken')
  *   GET  ?action=check&nickname=…&me=<id>                                          → 닉네임 사용 가능 여부
@@ -18,7 +19,7 @@ var LIMITS = {points: 60000, nick: 12, top: 100, answered: 400};
 // ───────── 웹 요청 ─────────
 function doGet(e){
   var p = (e && e.parameter) || {};
-  if(p.action === 'top') return json_(top_(readRows_(), Number(p.limit) || 50, String(p.me || '')));
+  if(p.action === 'top') return json_(top_(readRows_(), Number(p.limit) || 50, String(p.me || ''), String(p.sort || 'total')));
   if(p.action === 'check'){
     var nick = cleanNick_(p.nickname);
     return json_({ok: true, nickname: nick, available: !!nick && !nickTaken_(readRows_(), nick, String(p.me || ''))});
@@ -92,15 +93,20 @@ function rename_(rows, b, now){
   return {index: i, row: row, result: {ok: true, nickname: nick}};
 }
 
-function top_(rows, limit, me){
-  var sorted = rows.filter(function(r){ return r.id; }).sort(function(a, b){ return Number(b.total) - Number(a.total) || Number(a.updatedAt) - Number(b.updatedAt); });
+var SORTS = {best: true, total: true, games: true};
+function top_(rows, limit, me, sort){
+  var key = SORTS[sort] ? sort : 'total';
+  // 정렬 기준이 같으면 누적 점수, 그다음 먼저 기록한 사람
+  var sorted = rows.filter(function(r){ return r.id; }).sort(function(a, b){
+    return Number(b[key]) - Number(a[key]) || Number(b.total) - Number(a.total) || Number(a.updatedAt) - Number(b.updatedAt);
+  });
   var pub = function(r, i){
     return {rank: i + 1, nickname: String(r.nickname), total: Number(r.total), best: Number(r.best), games: Number(r.games),
       answered: Number(r.answered), correct: Number(r.correct), isMe: !!me && r.id === me};
   };
   var n = Math.max(1, Math.min(LIMITS.top, limit));
   var mi = me ? indexOf_(sorted, me) : -1;
-  return {ok: true, players: sorted.length, rows: sorted.slice(0, n).map(pub), me: mi >= 0 ? pub(sorted[mi], mi) : null};
+  return {ok: true, sort: key, players: sorted.length, rows: sorted.slice(0, n).map(pub), me: mi >= 0 ? pub(sorted[mi], mi) : null};
 }
 
 function indexOf_(rows, id){
